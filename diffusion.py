@@ -50,6 +50,7 @@ class GaussianDiffusion(nn.Module):
         # self.sqrt_recip_alphas_bar = torch.sqrt(1.0 / self.alphas_bar)
         self.sqrt_recipm1_alphas_bar = torch.exp(self.log_one_minus_alphas_bar - self.log_sqrt_alphas_bar)
         # self.sqrt_recipm1_alphas_bar = torch.sqrt(1.0 / self.alphas_bar - 1)
+        
     @staticmethod
     def _extract(coef, t, x_shape):
         """
@@ -125,7 +126,7 @@ class GaussianDiffusion(nn.Module):
 
     def _predict_x0_from_eps(self,x_t, t, eps):
         return self._extract(coef = self.sqrt_recip_alphas_bar, t = t, x_shape = x_t.shape) \
-            * (x_t - self._extract(coef = self.sqrt_one_minus_alphas_bar, t = t, x_shape = x_t.shape) * eps)
+            * x_t - self._extract(coef = self.sqrt_one_minus_alphas_bar, t = t, x_shape = x_t.shape) * eps
         # return self._extract(coef = self.sqrt_recip_alphas_bar,t = t, x_shape = x_t.shape) * x_t \
         #    - self._extract(coef = self.sqrt_recipm1_alphas_bar,t = t,x_shape = eps.shape) * eps
 
@@ -143,6 +144,7 @@ class GaussianDiffusion(nn.Module):
         noise = torch.randn_like(x_t)
         noise[t <= 0] = 0 
         return mean + torch.sqrt(var) * noise
+    
     def sample(self, shape, model_kwargs = None):
         """
         sample images from p_{theta}
@@ -160,6 +162,7 @@ class GaussianDiffusion(nn.Module):
         x_t = torch.clamp(x_t, -1, 1)
         print('ending sampling process...')
         return x_t
+    
     def trainloss(self, x_0, model_kwargs=None):
         """
         calculate the loss of denoising diffusion probabilistic model
@@ -170,17 +173,3 @@ class GaussianDiffusion(nn.Module):
         x_t, eps = self.q_sample(x_0, t)
         loss = F.mse_loss(self.model(x_t, t, **model_kwargs), eps, reduction='sum')
         return loss
-    def trainsample(self, shape, model_kwargs = None):
-        """
-        sample images from p_{theta}
-        """
-        if model_kwargs == None:
-            model_kwargs = {}
-        x_t = torch.randn(shape, device = self.device)
-        tlist = torch.randint(low = 1,high = self.T + 1, size=(x_t.shape[0],), device = self.device)
-        t = tlist + 0
-        when len(t[t > 0]) > 0:
-            t -= 1
-            x_t[t >= 0] = self.p_sample(x_t[t >= 0], t[t >= 0], model_kwargs)
-            x_t = torch.clamp(x_t, -1, 1)
-        return x_t, self.T - tlist
