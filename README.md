@@ -19,3 +19,5 @@ make train
 make sample
 ```
 **NOTICE** : hyperparameter settings are in the file *sample.py*
+## Performance
+![sample_49_pict](sample_49_pict.png)
