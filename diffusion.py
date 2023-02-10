@@ -21,7 +21,7 @@ class GaussianDiffusion(nn.Module):
         self.alphas_bar = torch.exp(self.log_alphas_bar)
         # self.alphas_bar = torch.cumprod(self.alphas, dim = 0)
         
-        self.log_alphas_bar_prev = F.pad(self.log_alphas_bar[:-1],[1,0],'constant',0)
+        self.log_alphas_bar_prev = F.pad(self.log_alphas_bar[:-1],[1,0],'constant', 0)
         self.alphas_bar_prev = torch.exp(self.log_alphas_bar_prev)
         self.log_one_minus_alphas_bar_prev = torch.log(1.0 - self.alphas_bar_prev)
         # self.alphas_bar_prev = F.pad(self.alphas_bar[:-1],[1,0],'constant',1)
@@ -44,13 +44,14 @@ class GaussianDiffusion(nn.Module):
         self.log_tilde_betas_clipped = torch.log(torch.cat((self.tilde_betas[1].view(-1), self.tilde_betas[1:]), 0))
         self.mu_coef_x0 = self.betas * torch.exp(0.5 * self.log_alphas_bar_prev - self.log_one_minus_alphas_bar)
         self.mu_coef_xt = torch.exp(0.5 * self.log_alphas + self.log_one_minus_alphas_bar_prev - self.log_one_minus_alphas_bar)
-    
+        self.vars = torch.cat((self.tilde_betas[1:2],self.betas[1:]), 0)
+        self.coef1 = torch.exp(-self.log_sqrt_alphas)
+        self.coef2 = self.coef1 * self.betas / self.sqrt_one_minus_alphas_bar
         # calculate parameters for predicted x_0
         self.sqrt_recip_alphas_bar = torch.exp(-self.log_sqrt_alphas_bar)
         # self.sqrt_recip_alphas_bar = torch.sqrt(1.0 / self.alphas_bar)
         self.sqrt_recipm1_alphas_bar = torch.exp(self.log_one_minus_alphas_bar - self.log_sqrt_alphas_bar)
         # self.sqrt_recipm1_alphas_bar = torch.sqrt(1.0 / self.alphas_bar - 1)
-        
     @staticmethod
     def _extract(coef, t, x_shape):
         """
@@ -100,8 +101,8 @@ class GaussianDiffusion(nn.Module):
         log_posterior_var_max = self._extract(torch.log(self.betas), t, x_t.shape)
         log_posterior_var = self.v * log_posterior_var_max + (1 - self.v) * log_posterior_var_min
         neo_posterior_var = torch.exp(log_posterior_var)
+        
         return posterior_mean, posterior_var_max, neo_posterior_var
-    
     def p_mean_variance(self, x_t, t, model_kwargs = None):
         """
         calculate the parameters of p_{theta}(x_{t-1}|x_t)
@@ -115,20 +116,21 @@ class GaussianDiffusion(nn.Module):
         model_kwargs['cemb'] = torch.zeros(cemb_shape, device = self.device)
         pred_eps_uncond = self.model(x_t, t, **model_kwargs)
         pred_eps = (1 + self.w) * pred_eps_cond - self.w * pred_eps_uncond
-        pred_x_0 = self._predict_x0_from_eps(x_t, t.type(dtype=torch.long), pred_eps).clamp(-1, 1)
-
+        
         assert torch.isnan(x_t).int().sum() == 0, f"nan in tensor x_t when t = {t[0]}"
         assert torch.isnan(t).int().sum() == 0, f"nan in tensor t when t = {t[0]}"
         assert torch.isnan(pred_eps).int().sum() == 0, f"nan in tensor pred_eps when t = {t[0]}"
-        assert torch.isnan(pred_x_0).int().sum() == 0, f"nan in tensor pred_x_0 when t = {t[0]}"
-        p_mean, _, p_var = self.q_posterior_mean_variance(pred_x_0, x_t, t.type(dtype=torch.long))
+        p_mean = self._predict_xt_prev_mean_from_eps(x_t, t.type(dtype=torch.long), pred_eps)
+        p_var = self._extract(self.vars, t.type(dtype=torch.long), x_t.shape)
         return p_mean, p_var
 
-    def _predict_x0_from_eps(self,x_t, t, eps):
+    def _predict_x0_from_eps(self, x_t, t, eps):
         return self._extract(coef = self.sqrt_recip_alphas_bar, t = t, x_shape = x_t.shape) \
             * x_t - self._extract(coef = self.sqrt_one_minus_alphas_bar, t = t, x_shape = x_t.shape) * eps
-        # return self._extract(coef = self.sqrt_recip_alphas_bar,t = t, x_shape = x_t.shape) * x_t \
-        #    - self._extract(coef = self.sqrt_recipm1_alphas_bar,t = t,x_shape = eps.shape) * eps
+
+    def _predict_xt_prev_mean_from_eps(self, x_t, t, eps):
+        return self._extract(coef = self.coef1, t = t, x_shape = x_t.shape) * x_t - \
+            self._extract(coef = self.coef2, t = t, x_shape = x_t.shape) * eps
 
     def p_sample(self, x_t, t, model_kwargs = None):
         """
@@ -144,7 +146,6 @@ class GaussianDiffusion(nn.Module):
         noise = torch.randn_like(x_t)
         noise[t <= 0] = 0 
         return mean + torch.sqrt(var) * noise
-    
     def sample(self, shape, model_kwargs = None):
         """
         sample images from p_{theta}
@@ -158,11 +159,9 @@ class GaussianDiffusion(nn.Module):
             tlist -= 1
             with torch.no_grad():
                 x_t = self.p_sample(x_t, tlist, model_kwargs)
-                x_t = torch.clamp(x_t, -1, 1)
         x_t = torch.clamp(x_t, -1, 1)
         print('ending sampling process...')
         return x_t
-    
     def trainloss(self, x_0, model_kwargs=None):
         """
         calculate the loss of denoising diffusion probabilistic model
@@ -171,5 +170,6 @@ class GaussianDiffusion(nn.Module):
             model_kwargs = {}
         t = torch.randint(self.T, size = (x_0.shape[0],), device=self.device)
         x_t, eps = self.q_sample(x_0, t)
-        loss = F.mse_loss(self.model(x_t, t, **model_kwargs), eps, reduction='sum')
+        pred_eps = self.model(x_t, t, **model_kwargs)
+        loss = F.mse_loss(pred_eps, eps, reduction='mean')
         return loss
