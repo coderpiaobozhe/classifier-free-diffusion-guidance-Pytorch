@@ -176,7 +176,7 @@ class Unet(nn.Module):
             for _ in range(self.num_res_blocks):
                 layers = [
                     ResBlock(now_ch, nxt_ch, tdim, tdim, self.droprate),
-                    AttnBlock(nxt_ch, self.num_heads)
+#                     AttnBlock(nxt_ch, self.num_heads)
                 ]
                 now_ch = nxt_ch
                 self.downblocks.append(EmbedSequential(*layers))
@@ -186,7 +186,7 @@ class Unet(nn.Module):
                 chs.append(now_ch)
         self.middleblocks = EmbedSequential(
             ResBlock(now_ch, now_ch, tdim, tdim, self.droprate),
-            AttnBlock(now_ch, self.num_heads),
+#             AttnBlock(now_ch, self.num_heads),
             ResBlock(now_ch, now_ch, tdim, tdim, self.droprate)
         )
         self.upblocks = nn.ModuleList([])
@@ -195,7 +195,7 @@ class Unet(nn.Module):
             for j in range(num_res_blocks + 1):
                 layers = [
                     ResBlock(now_ch+chs.pop(), nxt_ch, tdim, tdim, self.droprate),
-                    AttnBlock(nxt_ch, self.num_heads)
+#                     AttnBlock(nxt_ch, self.num_heads)
                 ]
                 now_ch = nxt_ch
                 if i and j == self.num_res_blocks:
