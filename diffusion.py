@@ -9,7 +9,7 @@ class GaussianDiffusion(nn.Module):
         self.dtype = dtype
         self.model = model.to(device)
         self.model.dtype = self.dtype
-        self.betas = torch.tensor(betas,dtype=torch.float64)
+        self.betas = torch.tensor(betas,dtype=self.dtype)
         self.w = w
         self.v = v
         self.T = len(betas)
@@ -103,7 +103,7 @@ class GaussianDiffusion(nn.Module):
         neo_posterior_var = torch.exp(log_posterior_var)
         
         return posterior_mean, posterior_var_max, neo_posterior_var
-    def p_mean_variance(self, x_t, t, model_kwargs = None):
+    def p_mean_variance(self, x_t, t, **model_kwargs):
         """
         calculate the parameters of p_{theta}(x_{t-1}|x_t)
         """
@@ -132,7 +132,7 @@ class GaussianDiffusion(nn.Module):
         return self._extract(coef = self.coef1, t = t, x_shape = x_t.shape) * x_t - \
             self._extract(coef = self.coef2, t = t, x_shape = x_t.shape) * eps
 
-    def p_sample(self, x_t, t, model_kwargs = None):
+    def p_sample(self, x_t, t, **model_kwargs):
         """
         sample x_{t-1} from p_{theta}(x_{t-1}|x_t)
         """
@@ -140,13 +140,13 @@ class GaussianDiffusion(nn.Module):
             model_kwargs = {}
         B, C = x_t.shape[:2]
         assert t.shape == (B,), f"size of t is not batch size {B}"
-        mean, var = self.p_mean_variance(x_t , t, model_kwargs)
+        mean, var = self.p_mean_variance(x_t , t, **model_kwargs)
         assert torch.isnan(mean).int().sum() == 0, f"nan in tensor mean when t = {t[0]}"
         assert torch.isnan(var).int().sum() == 0, f"nan in tensor var when t = {t[0]}"
         noise = torch.randn_like(x_t)
         noise[t <= 0] = 0 
         return mean + torch.sqrt(var) * noise
-    def sample(self, shape, model_kwargs = None):
+    def sample(self, shape, **model_kwargs):
         """
         sample images from p_{theta}
         """
@@ -158,11 +158,11 @@ class GaussianDiffusion(nn.Module):
         for _ in tqdm(range(self.T),dynamic_ncols=True):
             tlist -= 1
             with torch.no_grad():
-                x_t = self.p_sample(x_t, tlist, model_kwargs)
+                x_t = self.p_sample(x_t, tlist, **model_kwargs)
         x_t = torch.clamp(x_t, -1, 1)
         print('ending sampling process...')
         return x_t
-    def trainloss(self, x_0, model_kwargs=None):
+    def trainloss(self, x_0, **model_kwargs):
         """
         calculate the loss of denoising diffusion probabilistic model
         """
