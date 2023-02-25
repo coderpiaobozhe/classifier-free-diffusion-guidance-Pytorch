@@ -115,35 +115,64 @@ class ResBlock(EmbedBlock):
 
         latent += self.residual(x)
         return latent
-
+        
 class AttnBlock(nn.Module):
-    def __init__(self, in_ch, num_heads):
+    def __init__(self, in_ch):
         super().__init__()
-        self.in_ch = in_ch
-        self.num_heads = num_heads
         self.group_norm = nn.GroupNorm(32, in_ch)
-        self.proj_qkv = nn.Conv2d(in_ch, in_ch * 3, 1, stride = 1, padding = 0)
-        self.proj = nn.Conv2d(in_ch, in_ch, 1, stride = 1, padding = 0)
-    def attention(self, qkv):
-        B, C, H, W = qkv.shape
-        L = H * W
-        qkv = qkv.reshape(B, C, -1) 
-        ch = C // (3 * self.num_heads)
-        q, k, v = qkv.chunk(3, dim = 1)
-        scale = 1 / math.sqrt(ch)
-        w = torch.einsum("bcq,bck->bqk", q.reshape(B * self.num_heads, ch, L), k.reshape(B * self.num_heads, ch, L)) / scale
-        w = torch.softmax(w, dim = -1)
-        alpha = torch.einsum("bqk,bck->bcq", w, v.reshape(B * self.num_heads, ch, L))
-        return alpha.reshape(B, ch, H, W)
+        self.proj_q = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+        self.proj_k = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+        self.proj_v = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+        self.proj = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+
     def forward(self, x):
         B, C, H, W = x.shape
-        qkv = self.proj_qkv(self.group_norm(x))
-        alpha = self.attention(qkv)
-        alpha = self.proj(alpha)
-        return x + alpha
+        h = self.group_norm(x)
+        q = self.proj_q(h)
+        k = self.proj_k(h)
+        v = self.proj_v(h)
+
+        q = q.permute(0, 2, 3, 1).view(B, H * W, C)
+        k = k.view(B, C, H * W)
+        w = torch.bmm(q, k) * (int(C) ** (-0.5))
+        assert list(w.shape) == [B, H * W, H * W]
+        w = F.softmax(w, dim=-1)
+
+        v = v.permute(0, 2, 3, 1).view(B, H * W, C)
+        h = torch.bmm(w, v)
+        assert list(h.shape) == [B, H * W, C]
+        h = h.view(B, H, W, C).permute(0, 3, 1, 2)
+        h = self.proj(h)
+
+        return x + h
+# class AttnBlock(nn.Module):
+#     def __init__(self, in_ch, num_heads):
+#         super().__init__()
+#         self.in_ch = in_ch
+#         self.num_heads = num_heads
+#         self.group_norm = nn.GroupNorm(32, in_ch)
+#         self.proj_qkv = nn.Conv2d(in_ch, in_ch * 3, 1, stride = 1, padding = 0)
+#         self.proj = nn.Conv2d(in_ch, in_ch, 1, stride = 1, padding = 0)
+#     def attention(self, qkv):
+#         B, C, H, W = qkv.shape
+#         L = H * W
+#         qkv = qkv.reshape(B, C, -1) 
+#         ch = C // (3 * self.num_heads)
+#         q, k, v = qkv.chunk(3, dim = 1)
+#         scale = 1 / math.sqrt(ch)
+#         w = torch.einsum("bcq,bck->bqk", q.reshape(B * self.num_heads, ch, L), k.reshape(B * self.num_heads, ch, L)) / scale
+#         w = torch.softmax(w, dim = -1)
+#         alpha = torch.einsum("bqk,bck->bcq", w, v.reshape(B * self.num_heads, ch, L))
+#         return alpha.reshape(B, ch, H, W)
+#     def forward(self, x):
+#         B, C, H, W = x.shape
+#         qkv = self.proj_qkv(self.group_norm(x))
+#         alpha = self.attention(qkv)
+#         alpha = self.proj(alpha)
+#         return x + alpha
 
 class Unet(nn.Module):
-    def __init__(self, in_ch=3, mod_ch=64, out_ch=3, ch_mul=[1,2,4,8], num_res_blocks=2, cdim=10, use_conv=True, droprate=0, num_heads=1, dtype=torch.float32):
+    def __init__(self, in_ch=3, mod_ch=64, out_ch=3, ch_mul=[1,2,4,8], num_res_blocks=2, cdim=10, use_conv=True, droprate=0, dtype=torch.float32):
         super().__init__()
         self.in_ch = in_ch
         self.mod_ch = mod_ch
@@ -153,7 +182,7 @@ class Unet(nn.Module):
         self.cdim = cdim
         self.use_conv = use_conv
         self.droprate = droprate
-        self.num_heads = num_heads
+        # self.num_heads = num_heads
         self.dtype = dtype
         tdim = mod_ch * 4
         self.temb_layer = nn.Sequential(
@@ -176,7 +205,7 @@ class Unet(nn.Module):
             for _ in range(self.num_res_blocks):
                 layers = [
                     ResBlock(now_ch, nxt_ch, tdim, tdim, self.droprate),
-#                     AttnBlock(nxt_ch, self.num_heads)
+                    AttnBlock(nxt_ch)
                 ]
                 now_ch = nxt_ch
                 self.downblocks.append(EmbedSequential(*layers))
@@ -186,7 +215,7 @@ class Unet(nn.Module):
                 chs.append(now_ch)
         self.middleblocks = EmbedSequential(
             ResBlock(now_ch, now_ch, tdim, tdim, self.droprate),
-#             AttnBlock(now_ch, self.num_heads),
+            AttnBlock(now_ch),
             ResBlock(now_ch, now_ch, tdim, tdim, self.droprate)
         )
         self.upblocks = nn.ModuleList([])
@@ -195,7 +224,7 @@ class Unet(nn.Module):
             for j in range(num_res_blocks + 1):
                 layers = [
                     ResBlock(now_ch+chs.pop(), nxt_ch, tdim, tdim, self.droprate),
-#                     AttnBlock(nxt_ch, self.num_heads)
+                    AttnBlock(nxt_ch)
                 ]
                 now_ch = nxt_ch
                 if i and j == self.num_res_blocks:
