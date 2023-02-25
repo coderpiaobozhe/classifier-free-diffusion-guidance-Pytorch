@@ -76,7 +76,7 @@ def main():
     parser.add_argument('--numres',type=int,default=2,help='number of resblocks for each block in Unet model')
     parser.add_argument('--useconv',type=bool,default=True,help='whether use convlution in downsample')
     parser.add_argument('--droprate',type=float,default=0,help='dropout rate for model')
-    parser.add_argument('--numheads',type=int,default=1,help='number of attention heads')
+    # parser.add_argument('--numheads',type=int,default=1,help='number of attention heads')
 
     args = parser.parse_args()
     sample(args)
