@@ -1,6 +1,6 @@
 import math
 import numpy as np
-def get_named_beta_schedule(schedule_name='linear', num_diffusion_timesteps=1000):
+def get_named_beta_schedule(schedule_name='linear', num_diffusion_timesteps=1000) -> np.ndarray:
     """
     Get a pre-defined beta schedule for the given name.
 
@@ -26,7 +26,7 @@ def get_named_beta_schedule(schedule_name='linear', num_diffusion_timesteps=1000
     else:
         raise NotImplementedError(f"unknown beta schedule: {schedule_name}")
         
-def betas_for_alpha_bar(num_diffusion_timesteps, alpha_bar, max_beta=0.999):
+def betas_for_alpha_bar(num_diffusion_timesteps:int, alpha_bar, max_beta=0.999) -> np.ndarray:
     """
     Create a beta schedule that discretizes the given alpha_t_bar function,
     which defines the cumulative product of (1-beta) over time from t = [0,1].
