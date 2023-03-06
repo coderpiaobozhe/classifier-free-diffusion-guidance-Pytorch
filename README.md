@@ -15,8 +15,13 @@ make train
 ```
 **NOTICE** : hyperparameter settings are in the file *train.py*
 ### How to sample
+To get pictures, you need to excute the following command:
 ```bash
-make sample
+make samplepict
+```
+To get .npz files(used for FID calculation), you need to excute the following command:
+```bash
+make samplenpz
 ```
 **NOTICE** : hyperparameter settings are in the file *sample.py*
 ## Performance
