@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-def timestep_embedding(timesteps, dim, max_period=10000):
+def timestep_embedding(timesteps:torch.Tensor, dim:int, max_period=10000) -> torch.Tensor:
     """
     Create sinusoidal timestep embeddings.
 
@@ -28,12 +28,12 @@ class Upsample(nn.Module):
     """
     an upsampling layer
     """
-    def __init__(self, in_ch, out_ch):
+    def __init__(self, in_ch:int, out_ch:int):
         super().__init__()
         self.in_ch = in_ch
         self.out_ch = out_ch
         self.layer = nn.Conv2d(in_ch, out_ch, kernel_size = 3, stride = 1, padding = 1)
-    def forward(self, x):
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == self.in_ch, f'x and upsampling layer({self.in_ch}->{self.out_ch}) doesn\'t match.'
         x = F.interpolate(x, scale_factor = 2, mode = "nearest")
         output = self.layer(x)
@@ -43,7 +43,7 @@ class Downsample(nn.Module):
     """
     a downsampling layer
     """
-    def __init__(self, in_ch, out_ch, use_conv):
+    def __init__(self, in_ch:int, out_ch:int, use_conv:bool):
         super().__init__()
         self.in_ch = in_ch
         self.out_ch = out_ch
@@ -51,7 +51,7 @@ class Downsample(nn.Module):
             self.layer = nn.Conv2d(self.in_ch, self.out_ch, kernel_size = 3, stride = 2, padding = 1)
         else:
             self.layer = nn.AvgPool2d(kernel_size = 2, stride = 2)
-    def forward(self, x):
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
         assert x.shape[1] == self.in_ch, f'x and upsampling layer({self.in_ch}->{self.out_ch}) doesn\'t match.'
         return self.layer(x)
 
@@ -65,7 +65,7 @@ class EmbedBlock(nn.Module):
         abstract method
         """
 class EmbedSequential(nn.Sequential, EmbedBlock):
-    def forward(self, x, temb, cemb):
+    def forward(self, x:torch.Tensor, temb:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         for layer in self:
             if isinstance(layer, EmbedBlock):
                 x = layer(x, temb, cemb)
@@ -73,7 +73,7 @@ class EmbedSequential(nn.Sequential, EmbedBlock):
                 x = layer(x)
         return x
 class ResBlock(EmbedBlock):
-    def __init__(self, in_ch, out_ch, tdim, cdim, droprate):
+    def __init__(self, in_ch:torch.Tensor, out_ch:torch.Tensor, tdim:int, cdim:int, droprate:float):
         super().__init__()
         self.in_ch = in_ch
         self.out_ch = out_ch
@@ -84,7 +84,7 @@ class ResBlock(EmbedBlock):
         self.block_1 = nn.Sequential(
             nn.GroupNorm(32, in_ch),
             nn.SiLU(),
-            nn.Conv2d(in_ch, out_ch, 3, padding = 1),
+            nn.Conv2d(in_ch, out_ch, kernel_size = 3, padding = 1),
         )
 
         self.temb_proj = nn.Sequential(
@@ -100,14 +100,14 @@ class ResBlock(EmbedBlock):
             nn.GroupNorm(32, out_ch),
             nn.SiLU(),
             nn.Dropout(p = self.droprate),
-            nn.Conv2d(out_ch, out_ch, 3, stride = 1, padding = 1),
+            nn.Conv2d(out_ch, out_ch, kernel_size = 3, stride = 1, padding = 1),
             
         )
         if in_ch != out_ch:
-            self.residual = nn.Conv2d(in_ch, out_ch, 1, stride = 1, padding = 0)
+            self.residual = nn.Conv2d(in_ch, out_ch, kernel_size = 1, stride = 1, padding = 0)
         else:
             self.residual = nn.Identity()
-    def forward(self, x, temb, cemb):
+    def forward(self, x:torch.Tensor, temb:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         latent = self.block_1(x)
         latent += self.temb_proj(temb)[:, :, None, None]
         latent += self.cemb_proj(cemb)[:, :, None, None]
@@ -117,15 +117,15 @@ class ResBlock(EmbedBlock):
         return latent
         
 class AttnBlock(nn.Module):
-    def __init__(self, in_ch):
+    def __init__(self, in_ch:int):
         super().__init__()
         self.group_norm = nn.GroupNorm(32, in_ch)
-        self.proj_q = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-        self.proj_k = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-        self.proj_v = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
-        self.proj = nn.Conv2d(in_ch, in_ch, 1, stride=1, padding=0)
+        self.proj_q = nn.Conv2d(in_ch, in_ch, kernel_size = 1, stride=1, padding=0)
+        self.proj_k = nn.Conv2d(in_ch, in_ch, kernel_size = 1, stride=1, padding=0)
+        self.proj_v = nn.Conv2d(in_ch, in_ch, kernel_size = 1, stride=1, padding=0)
+        self.proj = nn.Conv2d(in_ch, in_ch, kernel_size = 1, stride=1, padding=0)
 
-    def forward(self, x):
+    def forward(self, x:torch.Tensor) -> torch.Tensor:
         B, C, H, W = x.shape
         h = self.group_norm(x)
         q = self.proj_q(h)
@@ -235,7 +235,7 @@ class Unet(nn.Module):
             nn.SiLU(),
             nn.Conv2d(now_ch, self.out_ch, 3, stride = 1, padding = 1)
         )
-    def forward(self, x, t, cemb):
+    def forward(self, x:torch.Tensor, t:torch.Tensor, cemb:torch.Tensor) -> torch.Tensor:
         temb = self.temb_layer(timestep_embedding(t, self.mod_ch))
         cemb = self.cemb_layer(cemb)
         hs = []
