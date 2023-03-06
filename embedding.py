@@ -1,7 +1,8 @@
+import torch
 from torch import nn
 
 class ConditionalEmbedding(nn.Module):
-    def __init__(self, num_labels, d_model, dim):
+    def __init__(self, num_labels:int, d_model:int, dim:int):
         assert d_model % 2 == 0
         super().__init__()
         self.condEmbedding = nn.Sequential(
@@ -11,6 +12,6 @@ class ConditionalEmbedding(nn.Module):
             nn.Linear(dim, dim),
         )
 
-    def forward(self, t):
+    def forward(self, t:torch.Tensor) -> torch.Tensor:
         emb = self.condEmbedding(t)
         return emb
