@@ -20,4 +20,4 @@ make sample
 ```
 **NOTICE** : hyperparameter settings are in the file *sample.py*
 ## Performance
-![generated_740_pict](generated_740_pict.png)
+![generated_740_pict](generated_1400_pict.png)
