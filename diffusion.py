@@ -1,10 +1,12 @@
 import torch
+import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
 import torch.nn.functional as F
+from torch.distributed import get_rank
 
 class GaussianDiffusion(nn.Module):
-    def __init__(self, dtype, model, betas, w, v, device):
+    def __init__(self, dtype:torch.dtype, model, betas:np.ndarray, w:float, v:float, device:torch.device):
         super().__init__()
         self.dtype = dtype
         self.model = model.to(device)
@@ -53,7 +55,7 @@ class GaussianDiffusion(nn.Module):
         self.sqrt_recipm1_alphas_bar = torch.exp(self.log_one_minus_alphas_bar - self.log_sqrt_alphas_bar)
         # self.sqrt_recipm1_alphas_bar = torch.sqrt(1.0 / self.alphas_bar - 1)
     @staticmethod
-    def _extract(coef, t, x_shape):
+    def _extract(coef:torch.Tensor, t:torch.Tensor, x_shape:tuple) -> torch.Tensor:
         """
         input:
 
@@ -74,7 +76,7 @@ class GaussianDiffusion(nn.Module):
         chosen = chosen.to(t.device)
         return chosen.reshape(neo_shape)
 
-    def q_mean_variance(self, x_0, t):
+    def q_mean_variance(self, x_0:torch.Tensor, t:torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         calculate the parameters of q(x_t|x_0)
         """
@@ -82,7 +84,7 @@ class GaussianDiffusion(nn.Module):
         var = self._extract(1.0 - self.sqrt_alphas_bar, t, x_0.shape)
         return mean, var
     
-    def q_sample(self, x_0, t):
+    def q_sample(self, x_0:torch.Tensor, t:torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         sample from q(x_t|x_0)
         """
@@ -90,7 +92,7 @@ class GaussianDiffusion(nn.Module):
         return self._extract(self.sqrt_alphas_bar, t, x_0.shape) * x_0 \
             + self._extract(self.sqrt_one_minus_alphas_bar, t, x_0.shape) * eps, eps
     
-    def q_posterior_mean_variance(self, x_0, x_t, t):
+    def q_posterior_mean_variance(self, x_0:torch.Tensor, x_t:torch.Tensor, t:torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         calculate the parameters of q(x_{t-1}|x_t,x_0)
         """
@@ -103,7 +105,7 @@ class GaussianDiffusion(nn.Module):
         neo_posterior_var = torch.exp(log_posterior_var)
         
         return posterior_mean, posterior_var_max, neo_posterior_var
-    def p_mean_variance(self, x_t, t, **model_kwargs):
+    def p_mean_variance(self, x_t:torch.Tensor, t:torch.Tensor, **model_kwargs) -> tuple[torch.Tensor, torch.Tensor]:
         """
         calculate the parameters of p_{theta}(x_{t-1}|x_t)
         """
@@ -124,15 +126,15 @@ class GaussianDiffusion(nn.Module):
         p_var = self._extract(self.vars, t.type(dtype=torch.long), x_t.shape)
         return p_mean, p_var
 
-    def _predict_x0_from_eps(self, x_t, t, eps):
+    def _predict_x0_from_eps(self, x_t:torch.Tensor, t:torch.Tensor, eps:torch.Tensor) -> torch.Tensor:
         return self._extract(coef = self.sqrt_recip_alphas_bar, t = t, x_shape = x_t.shape) \
             * x_t - self._extract(coef = self.sqrt_one_minus_alphas_bar, t = t, x_shape = x_t.shape) * eps
 
-    def _predict_xt_prev_mean_from_eps(self, x_t, t, eps):
+    def _predict_xt_prev_mean_from_eps(self, x_t:torch.Tensor, t:torch.Tensor, eps:torch.Tensor) -> torch.Tensor:
         return self._extract(coef = self.coef1, t = t, x_shape = x_t.shape) * x_t - \
             self._extract(coef = self.coef2, t = t, x_shape = x_t.shape) * eps
 
-    def p_sample(self, x_t, t, **model_kwargs):
+    def p_sample(self, x_t:torch.Tensor, t:torch.Tensor, **model_kwargs) -> torch.Tensor:
         """
         sample x_{t-1} from p_{theta}(x_{t-1}|x_t)
         """
@@ -146,23 +148,26 @@ class GaussianDiffusion(nn.Module):
         noise = torch.randn_like(x_t)
         noise[t <= 0] = 0 
         return mean + torch.sqrt(var) * noise
-    def sample(self, shape, **model_kwargs):
+    def sample(self, shape:tuple, **model_kwargs) -> torch.Tensor:
         """
         sample images from p_{theta}
         """
-        print('Start generating...')
+        local_rank = get_rank()
+        if local_rank == 0:
+            print('Start generating...')
         if model_kwargs == None:
             model_kwargs = {}
         x_t = torch.randn(shape, device = self.device)
         tlist = torch.ones([x_t.shape[0]], device = self.device) * self.T
-        for _ in tqdm(range(self.T),dynamic_ncols=True):
+        for _ in tqdm(range(self.T),dynamic_ncols=True, disable=(local_rank % torch.cuda.device_count() != 0)):
             tlist -= 1
             with torch.no_grad():
                 x_t = self.p_sample(x_t, tlist, **model_kwargs)
         x_t = torch.clamp(x_t, -1, 1)
-        print('ending sampling process...')
+        if local_rank == 0:
+            print('ending sampling process...')
         return x_t
-    def trainloss(self, x_0, **model_kwargs):
+    def trainloss(self, x_0:torch.Tensor, **model_kwargs) -> torch.Tensor:
         """
         calculate the loss of denoising diffusion probabilistic model
         """
