@@ -64,6 +64,8 @@ def sample(params:argparse.ArgumentParser):
     diffusion.model.eval()
     cemblayer.eval()
     cnt = torch.cuda.device_count()
+    # if you want to do FID calculation then generate params.genum samples.
+    # else just generate params.genbatch samples.
     if params.fid:
         numloop = ceil(params.genum  / params.genbatch)
     else:
@@ -127,7 +129,7 @@ def main():
     parser.add_argument('--droprate',type=float,default=0,help='dropout rate for model')
     parser.add_argument('--clsnum',type=int,default=10,help='num of label classes')
     parser.add_argument('--fid',type=lambda x:(str(x).lower() in ['true','1', 'yes']),default=False,help='generate samples used for quantative evaluation')
-    parser.add_argument('--genum',type=int,default=50000,help='num of generated samples')
+    parser.add_argument('--genum',type=int,default=50000,help='num of generated samples used for FID calculation')
     parser.add_argument('--local_rank',default=-1,type=int,help='node rank for distributed training')
     args = parser.parse_args()
     sample(args)
