@@ -1,10 +1,13 @@
 .PHONY : train
 train:
-	CUDA_VISIBLE_DEVICES=0,1,2,3 torchrun --nproc_per_node=4 train.py
+	CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --standalone --nproc_per_node=gpu train.py
 .PHONY : sample
-sample:
-	python sample.py --w=2.0
-.PHONE : clean
+samplepict:
+	CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --standalone --nproc_per_node=gpu sample.py
+.PHONY : samplenpz
+samplenpz:
+	CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --standalone --nproc_per_node=gpu sample.py --fid True
+.PHONY : clean
 clean:
 	rm -rf __pycache__
 	rm -rf model/*
