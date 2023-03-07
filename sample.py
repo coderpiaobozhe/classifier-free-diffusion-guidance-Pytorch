@@ -12,7 +12,7 @@ from embedding import ConditionalEmbedding
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import get_rank, init_process_group, destroy_process_group, all_gather, get_world_size
 @torch.no_grad()
-def sample(params:argparse.ArgumentParser):
+def sample(params:argparse.Namespace):
     assert params.genbatch % (torch.cuda.device_count() * params.clsnum) == 0 , 'please re-set your genbatch!!!'
     # initialize settings
     init_process_group(backend="nccl")
