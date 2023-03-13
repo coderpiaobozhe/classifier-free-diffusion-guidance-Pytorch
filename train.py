@@ -43,7 +43,7 @@ def train(params:argparse.Namespace):
     if os.path.exists(lastpath):
         lastepc = torch.load(lastpath)['last_epoch']
         # load checkpoints
-        checkpoint = torch.load(os.path.join(params.moddir, f'ckpt_{lastepc}_checkpoint.pt'))
+        checkpoint = torch.load(os.path.join(params.moddir, f'ckpt_{lastepc}_checkpoint.pt'), map_location='cpu')
         net.load_state_dict(checkpoint['net'])
         cemblayer.load_state_dict(checkpoint['cemblayer'])
     else:
