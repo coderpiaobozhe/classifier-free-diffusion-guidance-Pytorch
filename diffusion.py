@@ -148,6 +148,7 @@ class GaussianDiffusion(nn.Module):
         noise = torch.randn_like(x_t)
         noise[t <= 0] = 0 
         return mean + torch.sqrt(var) * noise
+    
     def sample(self, shape:tuple, **model_kwargs) -> torch.Tensor:
         """
         sample images from p_{theta}
@@ -167,6 +168,80 @@ class GaussianDiffusion(nn.Module):
         if local_rank == 0:
             print('ending sampling process...')
         return x_t
+    
+    def ddim_p_mean_variance(self, x_t:torch.Tensor, t:torch.Tensor, prevt:torch.Tensor, eta:float, **model_kwargs) -> torch.Tensor:
+        """
+        calculate the parameters of p_{theta}(x_{t-1}|x_t)
+        """
+        if model_kwargs == None:
+            model_kwargs = {}
+        B, C = x_t.shape[:2]
+        assert t.shape == (B,)
+        cemb_shape = model_kwargs['cemb'].shape
+        pred_eps_cond = self.model(x_t, t, **model_kwargs)
+        model_kwargs['cemb'] = torch.zeros(cemb_shape, device = self.device)
+        pred_eps_uncond = self.model(x_t, t, **model_kwargs)
+        pred_eps = (1 + self.w) * pred_eps_cond - self.w * pred_eps_uncond
+        
+        assert torch.isnan(x_t).int().sum() == 0, f"nan in tensor x_t when t = {t[0]}"
+        assert torch.isnan(t).int().sum() == 0, f"nan in tensor t when t = {t[0]}"
+        assert torch.isnan(pred_eps).int().sum() == 0, f"nan in tensor pred_eps when t = {t[0]}"
+
+        alphas_bar_t = self._extract(coef = self.alphas_bar, t = t, x_shape = x_t.shape)
+        alphas_bar_prev = self._extract(coef = self.alphas_bar_prev, t = prevt + 1, x_shape = x_t.shape)
+        sigma = eta * torch.sqrt((1 - alphas_bar_prev) / (1 - alphas_bar_t) * (1 - alphas_bar_t / alphas_bar_prev))
+        p_var = sigma ** 2
+        coef_eps = 1 - alphas_bar_prev - p_var
+        coef_eps[coef_eps < 0] = 0
+        coef_eps = torch.sqrt(coef_eps)
+        p_mean = torch.sqrt(alphas_bar_prev) * (x_t - torch.sqrt(1 - alphas_bar_t) * pred_eps) / torch.sqrt(alphas_bar_t) + \
+            coef_eps * pred_eps
+        return p_mean, p_var
+    
+    def ddim_p_sample(self, x_t:torch.Tensor, t:torch.Tensor, prevt:torch.Tensor, eta:float, **model_kwargs) -> torch.Tensor: 
+        if model_kwargs == None:
+            model_kwargs = {}
+        B, C = x_t.shape[:2]
+        assert t.shape == (B,), f"size of t is not batch size {B}"
+        mean, var = self.ddim_p_mean_variance(x_t , t.type(dtype=torch.long), prevt.type(dtype=torch.long), eta, **model_kwargs)
+        assert torch.isnan(mean).int().sum() == 0, f"nan in tensor mean when t = {t[0]}"
+        assert torch.isnan(var).int().sum() == 0, f"nan in tensor var when t = {t[0]}"
+        noise = torch.randn_like(x_t)
+        noise[t <= 0] = 0 
+        return mean + torch.sqrt(var) * noise
+    
+    def ddim_sample(self, shape:tuple, num_steps:int, eta:float, select:str, **model_kwargs) -> torch.Tensor:
+        local_rank = get_rank()
+        if local_rank == 0:
+            print('Start generating(ddim)...')
+        if model_kwargs == None:
+            model_kwargs = {}
+        # a subsequence of range(0,1000)
+        if select == 'linear':
+            tseq = list(np.linspace(0, self.T-1, num_steps).astype(int))
+        elif select == 'quadratic':
+            tseq = list((np.linspace(0, np.sqrt(self.T), num_steps-1)**2).astype(int))
+            tseq.insert(0, 0)
+            tseq[-1] = self.T - 1
+        else:
+            raise NotImplementedError(f'There is no ddim discretization method called "{select}"')
+        
+        x_t = torch.randn(shape, device = self.device)
+        tlist = torch.zeros([x_t.shape[0]], device = self.device)
+        for i in tqdm(range(num_steps),dynamic_ncols=True, disable=(local_rank % torch.cuda.device_count() != 0)):
+            with torch.no_grad():
+                tlist = tlist * 0 + tseq[-1-i]
+                if i != num_steps - 1:
+                    prevt = torch.ones_like(tlist, device = self.device) * tseq[-2-i]
+                else:
+                    prevt = - torch.ones_like(tlist, device = self.device) 
+                x_t = self.ddim_p_sample(x_t, tlist, prevt, eta, **model_kwargs)
+                torch.cuda.empty_cache()
+        x_t = torch.clamp(x_t, -1, 1)
+        if local_rank == 0:
+            print('ending sampling process(ddim)...')
+        return x_t
+    
     def trainloss(self, x_0:torch.Tensor, **model_kwargs) -> torch.Tensor:
         """
         calculate the loss of denoising diffusion probabilistic model
@@ -178,3 +253,4 @@ class GaussianDiffusion(nn.Module):
         pred_eps = self.model(x_t, t, **model_kwargs)
         loss = F.mse_loss(pred_eps, eps, reduction='mean')
         return loss
+    
