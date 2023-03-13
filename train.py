@@ -48,7 +48,6 @@ def train(params:argparse.Namespace):
         cemblayer.load_state_dict(checkpoint['cemblayer'])
     else:
         lastepc = 0
-    # net.load_state_dict(torch.load(os.path.join(params.moddir, f'ckpt_{830}_diffusion.pt')))
     betas = get_named_beta_schedule(num_diffusion_timesteps = params.T)
     diffusion = GaussianDiffusion(
                     dtype = params.dtype,
@@ -59,7 +58,6 @@ def train(params:argparse.Namespace):
                     device = device
                 )
     
-    # cemblayer.load_state_dict(torch.load(os.path.join(params.moddir, f'ckpt_{830}_cemblayer.pt')))
     # DDP settings 
     diffusion.model = DDP(
                             diffusion.model,
@@ -81,7 +79,6 @@ def train(params:argparse.Namespace):
                     weight_decay = 1e-4
                 )
     
-    # optimizer.load_state_dict(torch.load(os.path.join(params.moddir, f'ckpt_{830}_optimizer.pt')))
     cosineScheduler = optim.lr_scheduler.CosineAnnealingLR(
                             optimizer = optimizer,
                             T_max = params.epoch,
@@ -98,7 +95,6 @@ def train(params:argparse.Namespace):
     if lastepc != 0:
         optimizer.load_state_dict(checkpoint['optimizer'])
         warmUpScheduler.load_state_dict(checkpoint['scheduler'])
-    # warmUpScheduler.load_state_dict(torch.load(os.path.join(params.moddir, f'ckpt_{830}_warmUpScheduler.pt')))
     # training
     cnt = torch.cuda.device_count()
     for epc in range(lastepc, params.epoch):
@@ -144,7 +140,10 @@ def train(params:argparse.Namespace):
                 lab = lab.to(device)
                 cemb = cemblayer(lab)
                 genshape = (each_device_batch , 3, 32, 32)
-                generated = diffusion.sample(genshape, cemb = cemb)
+                if params.ddim:
+                    generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
+                else:
+                    generated = diffusion.sample(genshape, cemb = cemb)
                 img = transback(generated)
                 img = img.reshape(params.clsnum, each_device_batch // params.clsnum, 3, 32, 32).contiguous()
                 gathered_samples = [torch.zeros_like(img) for _ in range(get_world_size())]
@@ -162,10 +161,6 @@ def train(params:argparse.Namespace):
                             }
             torch.save({'last_epoch':epc+1}, os.path.join(params.moddir,'last_epoch.pt'))
             torch.save(checkpoint, os.path.join(params.moddir, f'ckpt_{epc+1}_checkpoint.pt'))
-            # torch.save(diffusion.model.module.state_dict(), os.path.join(params.moddir, f'2nd_ckpt_{epc+1}_diffusion.pt'))
-            # torch.save(cemblayer.module.state_dict(), os.path.join(params.moddir, f'2nd_ckpt_{epc+1}_cemblayer.pt'))
-            # torch.save(optimizer.state_dict(), os.path.join(params.moddir, f'2nd_ckpt_{epc+1}_optimizer.pt'))
-            # torch.save(warmUpScheduler.state_dict(), os.path.join(params.moddir, f'2nd_ckpt_{epc+1}_warmUpScheduler.pt'))
         torch.cuda.empty_cache()
     destroy_process_group()
 
@@ -196,6 +191,10 @@ def main():
     parser.add_argument('--samdir',type=str,default='sample',help='sample addresses')
     parser.add_argument('--genbatch',type=int,default=80,help='batch size for sampling process')
     parser.add_argument('--clsnum',type=int,default=10,help='num of label classes')
+    parser.add_argument('--num_steps',type=int,default=50,help='sampling steps for DDIM')
+    parser.add_argument('--eta',type=float,default=0,help='eta for variance during DDIM sampling process')
+    parser.add_argument('--select',type=str,default='linear',help='selection stragies for DDIM')
+    parser.add_argument('--ddim',type=lambda x:(str(x).lower() in ['true','1', 'yes']),default=False,help='whether to use ddim')
     parser.add_argument('--local_rank',default=-1,type=int,help='node rank for distributed training')
     
     args = parser.parse_args()
