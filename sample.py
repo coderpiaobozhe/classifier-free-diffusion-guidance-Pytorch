@@ -33,7 +33,7 @@ def sample(params:argparse.Namespace):
                 # num_heads = params.numheads,
                 dtype=params.dtype
             ).to(device)
-    checkpoint = torch.load(os.path.join(params.moddir, f'ckpt_{params.epoch}_checkpoint.pt'))
+    checkpoint = torch.load(os.path.join(params.moddir, f'ckpt_{params.epoch}_checkpoint.pt'), map_location='cpu')
     net.load_state_dict(checkpoint['net'])
     # net.load_state_dict(torch.load(os.path.join(params.moddir, f'2nd_ckpt_{params.epoch}_diffusion.pt')))
     cemblayer = ConditionalEmbedding(10, params.cdim, params.cdim).to(device)
@@ -64,8 +64,6 @@ def sample(params:argparse.Namespace):
     diffusion.model.eval()
     cemblayer.eval()
     cnt = torch.cuda.device_count()
-    # if you want to do FID calculation then generate params.genum samples.
-    # else just generate params.genbatch samples.
     if params.fid:
         numloop = ceil(params.genum  / params.genbatch)
     else:
@@ -86,8 +84,13 @@ def sample(params:argparse.Namespace):
     cemb = cemblayer(lab)
     genshape = (each_device_batch, 3, 32, 32)
     all_samples = []
+    if local_rank == 0:
+        print(numloop)
     for _ in range(numloop):
-        generated = diffusion.sample(genshape, cemb = cemb)
+        if params.ddim:
+            generated = diffusion.ddim_sample(genshape, params.num_steps, params.eta, params.select, cemb = cemb)
+        else:
+            generated = diffusion.sample(genshape, cemb = cemb)
         # transform samples into images
         img = transback(generated)
         img = img.reshape(params.clsnum, each_device_batch // params.clsnum, 3, 32, 32).contiguous()
@@ -96,6 +99,7 @@ def sample(params:argparse.Namespace):
         all_samples.extend([img.cpu() for img in gathered_samples])
     samples = torch.concat(all_samples, dim = 1).reshape(params.genbatch * numloop, 3, 32, 32)
     if local_rank == 0:
+        print(samples.shape)
         # save images
         if params.fid:
             samples = (samples * 255).clamp(0, 255).to(torch.uint8)
@@ -129,7 +133,11 @@ def main():
     parser.add_argument('--droprate',type=float,default=0,help='dropout rate for model')
     parser.add_argument('--clsnum',type=int,default=10,help='num of label classes')
     parser.add_argument('--fid',type=lambda x:(str(x).lower() in ['true','1', 'yes']),default=False,help='generate samples used for quantative evaluation')
-    parser.add_argument('--genum',type=int,default=50000,help='num of generated samples used for FID calculation')
+    parser.add_argument('--genum',type=int,default=5600,help='num of generated samples')
+    parser.add_argument('--num_steps',type=int,default=50,help='sampling steps for DDIM')
+    parser.add_argument('--eta',type=float,default=0,help='eta for variance during DDIM sampling process')
+    parser.add_argument('--select',type=str,default='linear',help='selection stragies for DDIM')
+    parser.add_argument('--ddim',type=lambda x:(str(x).lower() in ['true','1', 'yes']),default=False,help='whether to use ddim')
     parser.add_argument('--local_rank',default=-1,type=int,help='node rank for distributed training')
     args = parser.parse_args()
     sample(args)
